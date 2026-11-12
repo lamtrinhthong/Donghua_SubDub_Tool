@@ -249,12 +249,13 @@ def dub_from_srt(
     print(f"[OK] [Dubber] Hoàn tất toàn bộ {len(diff_input)} file audio câu thoại.")
 
     # Chạy trực tiếp Micro-PID Time Warper trên timeline gốc từ SRT
-    print(f"[*] [Dubber] Đồng bộ dòng thời gian bằng Micro-PID Time Warper (Tốc độ: 1.08x - 1.15x)...")
+    print(f"[*] [Dubber] Đồng bộ dòng thời gian bằng Micro-PID Time Warper (Tốc độ: 1.00x - 1.05x, cứu hộ tới 1.40x)...")
     warper = MicroPIDTimeWarper(
         sample_rate=48000,
-        min_speed=1.08,
-        max_speed=1.15,
+        min_speed=1.00,
+        max_speed=1.05,
         emergency_speed=1.20,
+        hard_cap_speed=1.40,
         min_breath_pause=0.025
     )
     diff_events = warper.differentiate_timeline(diff_input, total_duration=total_duration)
@@ -265,6 +266,14 @@ def dub_from_srt(
         out_audio_path=out_audio_path
     )
     print(f"[OK] [Dubber] Master Audio sẵn sàng: {out_audio_path.name} (Tốc độ TB: {metrics['mean_speed']}x, Drift TB: {metrics['mean_drift_ms']}ms)")
+    if metrics.get("trimmed_sentences"):
+        print(f"[!] [Dubber] {metrics['trimmed_sentences']} câu bị cắt cứng để tránh chồng lấn "
+              f"(tổng {metrics['total_trimmed_ms']}ms) - có thể tăng hard_cap_speed để giữ đủ lời.")
+    if metrics.get("delayed_sentences"):
+        print(f"[!] [Dubber] {metrics['delayed_sentences']} câu bị trễ khỏi timeline gốc "
+              f"(tối đa {metrics['max_overlap_ms']}ms) - nghĩa là lời dịch dài hơn khung thời gian.")
+    if metrics.get("max_speed_used", 1.0) > 1.20:
+        print(f"[!] [Dubber] Có câu chạy tối đa {metrics['max_speed_used']}x - nghe có thể hơi gấp.")
 
     # Sinh file ASS Dynamic Rounded Capsule ôm khít text tiếng Việt
     print(f"[*] [Dubber] Đang sinh file phụ đề Dynamic Rounded Capsule ASS: {out_ass_path.name}...")
@@ -297,7 +306,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if not text_vi:
             continue
         s_val = ev.get("actual_start", ev.get("start", 0.0))
-        e_val = ev.get("actual_end", ev.get("end", s_val + 2.0))
+        # Dùng `sub_end` (thời điểm hiển thị đã tính sẵn) thay vì `actual_end`,
+        # để phụ đề khớp chính xác với audio kể cả khi câu bị cắt cứng.
+        e_val = ev.get("sub_end", ev.get("actual_end", ev.get("end", s_val + 2.0)))
+        e_val = max(e_val, s_val + 0.05)
         s_str = format_ass_time(s_val)
         e_str = format_ass_time(e_val)
 

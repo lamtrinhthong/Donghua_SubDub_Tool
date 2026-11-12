@@ -235,8 +235,8 @@ def action_download_bilibili():
     print(f"\n{GREEN}{BOLD}=== [2] TẢI VIDEO CHẤT LƯỢNG CAO & PHỤ ĐỀ CC TỪ BILIBILI ==={RESET}\n")
     url = prompt_input("Nhập link video Bilibili (BV...)")
     out_dir = prompt_input("Thư mục lưu video", default="workspace/bilibili_download")
-    part_str = clean_str(input(f"{BOLD}Số thứ tự tập (P) nếu là playlist [Enter = 1]{RESET}: "))
-    part = int(part_str) if part_str else 1
+    part_str = clean_str(input(f"{BOLD}Số thứ tự tập (P) nếu là playlist [Enter = lấy từ URL ?p= hoặc 1]{RESET}: "))
+    part = int(part_str) if part_str else None
     dur_str = clean_str(input(f"{BOLD}Giới hạn thời lượng tải (giây) [Enter = toàn bộ video]{RESET}: "))
     dur = float(dur_str) if dur_str else None
 

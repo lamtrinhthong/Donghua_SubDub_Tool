@@ -1,3 +1,5 @@
+import os
+import shutil
 import subprocess
 import wave
 from pathlib import Path
@@ -7,8 +9,74 @@ import imageio_ffmpeg
 # Single Source of Truth cho FFMPEG binary
 FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
 
+# Thư mục chứa tools dùng chung cho project (được git-ignore)
+TOOLS_DIR = Path(__file__).resolve().parent.parent / ".tools"
+FFMPEG_BIN_DIR = TOOLS_DIR / "bin"
+
 # Đường dẫn icon kênh chính thức mặc định (nằm ngay trong thư mục assets của project)
 DEFAULT_ICON = Path(__file__).resolve().parent.parent / "assets" / "channel_icon.png"
+
+
+def ensure_ffmpeg_bin() -> Path:
+    """
+    Chuẩn bị một bản `ffmpeg.exe` nằm trong thư mục có tên chuẩn và thêm thư mục đó vào PATH.
+
+    Lý do cần thiết:
+        yt-dlp kiểm tra khả năng tải 1 phần video qua `FFmpegFD.available()`, hàm này
+        KHÔNG đọc tham số `ffmpeg_location` mà chỉ dò trong `PATH`
+        (xem yt_dlp/downloader/external.py -> `FFmpegFD.available()`).
+        Vì vậy nếu chỉ truyền `ffmpeg_location` (đường dẫn file do imageio_ffmpeg cung cấp
+        với tên lạ như `ffmpeg-win-x86_64-v9.0.2.exe`) thì yt-dlp sẽ báo:
+            "You have requested downloading the video partially, but ffmpeg is not installed"
+
+    Hàm này copy binary ffmpeg hiện có sang `<project>/.tools/bin/ffmpeg.exe` (tên chuẩn)
+    rồi chèn thư mục đó vào `os.environ["PATH"]` để cả yt-dlp lẫn các tool khác tìm thấy.
+
+    Trả về: Path tới file ffmpeg.exe đã chuẩn bị.
+    """
+    FFMPEG_BIN_DIR.mkdir(parents=True, exist_ok=True)
+    target = FFMPEG_BIN_DIR / "ffmpeg.exe"
+
+    try:
+        src = Path(FFMPEG)
+        need_copy = True
+        if target.exists():
+            try:
+                need_copy = target.stat().st_size != src.stat().st_size
+            except OSError:
+                need_copy = True
+        if need_copy:
+            shutil.copy2(src, target)
+    except Exception as e:
+        print(f"[!] [Common] Không thể chuẩn bị ffmpeg.exe: {e}")
+        return Path(FFMPEG)
+
+    # Chèn thư mục chứa ffmpeg.exe vào PATH (ưu tiên cao nhất)
+    bin_dir = str(FFMPEG_BIN_DIR)
+    current = os.environ.get("PATH", "")
+    parts = current.split(os.pathsep) if current else []
+    if bin_dir.lower() not in [p.lower() for p in parts]:
+        os.environ["PATH"] = bin_dir + os.pathsep + current
+
+    return target
+
+
+def ffmpeg_location_for_ytdlp() -> Optional[str]:
+    """
+    Trả về giá trị nên truyền cho tham số `ffmpeg_location` của yt-dlp.
+
+    - Nếu tìm thấy `ffprobe.exe` cùng thư mục với ffmpeg -> truyền THƯ MỤC
+      (yt-dlp sẽ tự ghép `ffmpeg` + `ffprobe` trong thư mục đó).
+    - Ngược lại -> truyền đường dẫn file `ffmpeg.exe` (yt-dlp tự suy ra `ffprobe` từ tên file).
+    - Không tìm thấy -> None (để yt-dlp tự dò trong PATH).
+    """
+    ensure_ffmpeg_bin()
+    if (FFMPEG_BIN_DIR / "ffprobe.exe").exists():
+        return str(FFMPEG_BIN_DIR)
+    ffmpeg_exe = FFMPEG_BIN_DIR / "ffmpeg.exe"
+    if ffmpeg_exe.exists():
+        return str(ffmpeg_exe)
+    return None
 
 def seconds_to_srt_time(seconds: float) -> str:
     """

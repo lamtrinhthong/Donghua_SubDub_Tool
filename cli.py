@@ -75,7 +75,8 @@ Ví dụ sử dụng:
     p_bili.add_argument("--out-dir", type=str, default="workspace/bilibili_download", help="Thư mục lưu video")
     p_bili.add_argument("--cookies", type=str, default="assets/bilibili_cookies.txt", help="File cookies Bilibili (tùy chọn)")
     p_bili.add_argument("--duration", type=float, default=None, help="Giới hạn thời lượng tải (giây)")
-    p_bili.add_argument("--part", type=int, default=1, help="Số thứ tự tập (P)")
+    p_bili.add_argument("--part", type=int, default=None,
+                         help="Số thứ tự tập (P). Bỏ trống = lấy từ ?p= trong URL, mặc định 1")
 
     # Command: dub
     p_dub = subparsers.add_parser("dub", help="Lồng tiếng và sinh phụ đề ASS từ file .srt tiếng Việt")

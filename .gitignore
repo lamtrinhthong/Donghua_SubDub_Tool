@@ -13,6 +13,9 @@ downloads/
 temp/
 tmp/
 
+# Tools cục bộ (ffmpeg.exe chuẩn bị cho yt-dlp)
+.tools/
+
 # Media / artifacts
 *.mp4
 *.mkv
