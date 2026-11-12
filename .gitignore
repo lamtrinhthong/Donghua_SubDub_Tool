@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Tool outputs
+*.part
+*.ytdl
+output/
+downloads/
+temp/
+tmp/
+
+# Media / artifacts
+*.mp4
+*.mkv
+*.m4s
+*.flv
+*.wav
+*.mp3
+
+# Credentials / cookies
+cookies.txt
+*.cookies.txt
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
