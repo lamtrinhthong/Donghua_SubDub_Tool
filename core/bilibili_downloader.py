@@ -112,6 +112,151 @@ def extract_bvid_and_part(url: str) -> Tuple[str, int]:
     return bvid, part
 
 
+def fetch_bilibili_api_subtitles(
+    bvid: str,
+    part_index: int = 1,
+    browser_tuple: Optional[Tuple[str, str]] = None,
+    cookie_file: Optional[str] = None
+) -> Optional[List[Dict]]:
+    """
+    Lấy phụ đề tiếng Trung trực tiếp từ Bilibili API (fallback cho yt-dlp).
+
+    Lý do cần fallback:
+        Bilibili trả về phụ đề AI (lang=`ai-zh`) ở định dạng JSON tùy chỉnh
+        ({"body":[{"from":..,"to":..,"content":".."}]}) thay vì SRT/VTT chuẩn.
+        yt-dlp v2026.08.19 KHÔNG nhận diện được định dạng này và báo:
+            "There are no subtitles for the requested languages"
+        dù API thực tế CÓ trả về track phụ đề.
+
+    Trả về: list dict {"start","end","text"} hoặc None nếu không có.
+    """
+    try:
+        import requests
+    except Exception:
+        return None
+
+    session = requests.Session()
+
+    # Nạp cookie từ file
+    if cookie_file and Path(cookie_file).exists():
+        try:
+            from http.cookiejar import MozillaCookieJar
+            jar = MozillaCookieJar(cookie_file)
+            jar.load(ignore_discard=True, ignore_expires=True)
+            for c in jar:
+                session.cookies.set(c.name, c.value, domain=c.domain, path=c.path)
+        except Exception:
+            pass
+
+    # Nạp cookie từ trình duyệt
+    if browser_tuple:
+        try:
+            from yt_dlp.cookies import extract_cookies_from_browser
+            browser, profile = browser_tuple
+            jar = extract_cookies_from_browser(browser, profile)
+            for c in jar:
+                if "bilibili" in c.domain:
+                    session.cookies.set(c.name, c.value, domain=c.domain, path=c.path)
+        except Exception:
+            pass
+
+    headers = dict(DEFAULT_HEADERS)
+
+    try:
+        r = session.get(
+            "https://api.bilibili.com/x/web-interface/view",
+            params={"bvid": bvid}, headers=headers, timeout=15
+        )
+        data = r.json()
+        if data.get("code") != 0:
+            return None
+        view = data["data"]
+        aid = view["aid"]
+        pages = view.get("pages") or []
+        if not pages:
+            return None
+        idx = min(len(pages) - 1, max(0, part_index - 1))
+        cid = pages[idx]["cid"]
+
+        r2 = session.get(
+            "https://api.bilibili.com/x/player/v2",
+            params={"aid": aid, "cid": cid}, headers=headers, timeout=15
+        )
+        d2 = r2.json()
+        if d2.get("code") != 0:
+            return None
+        subs = (d2.get("data") or {}).get("subtitle") or {}
+        tracks = subs.get("subtitles") or []
+        if not tracks:
+            return None
+
+        # Ưu tiên track AI (ai-zh) hoặc track tiếng Trung đầu tiên
+        track = None
+        for t in tracks:
+            if t.get("lan", "").startswith("ai-zh") or t.get("lan", "") == "zh-Hans":
+                track = t
+                break
+        if track is None:
+            track = tracks[0]
+
+        sub_url = track.get("subtitle_url") or ""
+        if not sub_url:
+            return None
+        if sub_url.startswith("//"):
+            sub_url = "https:" + sub_url
+        elif not sub_url.startswith("http"):
+            sub_url = "https://aisubtitle.hdslb.com" + sub_url
+
+        r3 = session.get(sub_url, headers=headers, timeout=20)
+        if r3.status_code != 200:
+            return None
+        payload = r3.json()
+        body = payload.get("body") or []
+        if not body:
+            return None
+
+        result: List[Dict] = []
+        for item in body:
+            content = (item.get("content") or "").strip()
+            if not content:
+                continue
+            start = float(item.get("from", 0.0))
+            end = float(item.get("to", start))
+            if end <= start:
+                end = start + 0.5
+            result.append({"start": round(start, 3), "end": round(end, 3), "text": content})
+        return result or None
+    except Exception as e:
+        print(f"[!] [Bilibili Downloader] Lỗi khi lấy phụ đề qua API: {e}")
+        return None
+
+
+def bilibili_subtitles_to_srt(
+    api_subs: List[Dict], out_srt: Path, min_chars: int = 5
+) -> bool:
+    """Chuyển phụ đề từ Bilibili API sang file SRT chuẩn (dùng chung clean_bilibili_srt)."""
+    try:
+        subs = []
+        for i, s in enumerate(api_subs, 1):
+            txt = s["text"].strip(" 　♪♫[]()【】\t\r\n")
+            if not txt:
+                continue
+            subs.append({
+                "id": len(subs) + 1,
+                "start": s["start"],
+                "end": s["end"],
+                "duration": round(max(0.001, s["end"] - s["start"]), 3),
+                "text": txt
+            })
+        if len(subs) < min_chars:
+            return False
+        save_srt(subs, out_srt)
+        return True
+    except Exception as e:
+        print(f"[!] [Bilibili Downloader] Lỗi khi ghi SRT từ API: {e}")
+        return False
+
+
 def clean_bilibili_srt(raw_srt: Path, clean_srt: Path) -> bool:
     """
     Làm sạch file SRT tải từ Bilibili:
@@ -384,7 +529,23 @@ def download_bilibili_bundle(
     if zh_srt_path:
         print(f"🎉 [OK] [Bilibili Downloader] Đã tìm thấy & làm sạch phụ đề CC Bilibili: {zh_srt_path.name} (Bỏ qua Whisper!)")
     else:
-        print("[*] [Bilibili Downloader] Không có phụ đề CC mềm Bilibili. Sẽ sử dụng Intel Arc B580 OpenVINO để bóc tách.")
+        # --- Fallback: lấy phụ đề trực tiếp từ Bilibili API ---
+        # yt-dlp không đọc được track `ai-zh` (định dạng JSON tùy chỉnh của Bilibili),
+        # nên gọi API x/player/v2 để lấy subtitle_url rồi tải về.
+        print("[*] [Bilibili Downloader] yt-dlp không tìm thấy phụ đề, thử lại qua Bilibili API...")
+        api_subs = fetch_bilibili_api_subtitles(
+            bvid=bvid,
+            part_index=p_num,
+            browser_tuple=browser_tuple,
+            cookie_file=cookie_file
+        )
+        if api_subs:
+            api_srt = out_dir / f"{safe_title}_zh.srt"
+            if bilibili_subtitles_to_srt(api_subs, api_srt):
+                zh_srt_path = api_srt
+                print(f"🎉 [OK] [Bilibili Downloader] Đã lấy phụ đề qua Bilibili API: {api_srt.name} ({len(api_subs)} câu)")
+        if not zh_srt_path:
+            print("[*] [Bilibili Downloader] Không có phụ đề CC mềm Bilibili. Sẽ sử dụng Intel Arc B580 OpenVINO để bóc tách.")
 
     # 5. Tìm thumbnail
     thumbnail_path = None

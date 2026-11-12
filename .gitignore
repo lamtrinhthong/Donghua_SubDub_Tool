@@ -23,6 +23,8 @@ tmp/
 *.flv
 *.wav
 *.mp3
+workspace/
+output/
 
 # Credentials / cookies
 cookies.txt
